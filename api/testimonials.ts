@@ -1,11 +1,13 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
-import {
-  hasBlockedLanguage,
-  readJsonBody,
-  sendJson,
-  supabaseRequest,
-  type TestimonialRecord,
-} from './_supabase';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+
+type TestimonialRecord = {
+  id: string;
+  name: string;
+  role: string;
+  quote: string;
+  status: 'pending' | 'approved';
+  created_at?: string;
+};
 
 type NewTestimonialBody = {
   name?: string;
@@ -13,36 +15,88 @@ type NewTestimonialBody = {
   quote?: string;
 };
 
-export default async function handler(req: IncomingMessage, res: ServerResponse) {
+const blockedWords = [
+  'fuck',
+  'shit',
+  'bitch',
+  'asshole',
+  'dick',
+  'pussy',
+  'slut',
+  'whore',
+  'nigger',
+  'faggot',
+];
+
+function hasBlockedLanguage(value: string) {
+  return blockedWords.some((word) => new RegExp(`\\b${word}\\b`, 'i').test(value.toLowerCase()));
+}
+
+function getSupabaseConfig() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in Vercel.');
+  }
+
+  return {
+    restUrl: `${supabaseUrl.replace(/\/$/, '')}/rest/v1/testimonials`,
+    serviceRoleKey,
+  };
+}
+
+async function supabaseRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const { restUrl, serviceRoleKey } = getSupabaseConfig();
+  const response = await fetch(`${restUrl}${path}`, {
+    ...init,
+    headers: {
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation',
+      ...init.headers,
+    },
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Supabase request failed with ${response.status}`);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  return await response.json() as T;
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     if (req.method === 'GET') {
       const testimonials = await supabaseRequest<TestimonialRecord[]>(
         '?select=id,name,role,quote,status,created_at&status=eq.approved&order=created_at.desc',
       );
 
-      sendJson(res, 200, { testimonials });
-      return;
+      return res.status(200).json({ testimonials });
     }
 
     if (req.method === 'POST') {
-      const body = await readJsonBody<NewTestimonialBody>(req);
+      const body = req.body as NewTestimonialBody;
       const name = body.name?.trim() ?? '';
       const role = body.role?.trim() || 'Visitor';
       const quote = body.quote?.trim() ?? '';
 
       if (!name || !quote) {
-        sendJson(res, 400, { message: 'Name and comment are required.' });
-        return;
+        return res.status(400).json({ message: 'Name and comment are required.' });
       }
 
       if (name.length > 80 || role.length > 80 || quote.length > 500) {
-        sendJson(res, 400, { message: 'Please shorten your testimonial.' });
-        return;
+        return res.status(400).json({ message: 'Please shorten your testimonial.' });
       }
 
-      if (hasBlockedLanguage(`${name} ${role} ${quote}`.toLowerCase())) {
-        sendJson(res, 400, { message: 'Please remove inappropriate language before submitting.' });
-        return;
+      if (hasBlockedLanguage(`${name} ${role} ${quote}`)) {
+        return res.status(400).json({ message: 'Please remove inappropriate language before submitting.' });
       }
 
       const [testimonial] = await supabaseRequest<TestimonialRecord[]>('', {
@@ -56,13 +110,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         }),
       });
 
-      sendJson(res, 201, { testimonial });
-      return;
+      return res.status(201).json({ testimonial });
     }
 
-    sendJson(res, 405, { message: 'Method not allowed.' });
+    return res.status(405).json({ message: 'Method not allowed.' });
   } catch (error) {
-    sendJson(res, 500, {
+    return res.status(500).json({
       message: error instanceof Error ? error.message : 'Unexpected server error.',
     });
   }
