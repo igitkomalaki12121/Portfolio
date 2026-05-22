@@ -63,12 +63,21 @@ function hasBlockedLanguage(value: string) {
 }
 
 async function readApiJson<T>(response: Response): Promise<T> {
-  const data = await response.json().catch(() => ({}));
+  const rawData = await response.text();
+  let data: unknown = {};
+
+  if (rawData) {
+    try {
+      data = JSON.parse(rawData);
+    } catch {
+      data = {};
+    }
+  }
 
   if (!response.ok) {
     const message = data && typeof data === 'object' && 'message' in data
       ? String(data.message)
-      : 'Something went wrong. Please try again.';
+      : rawData || `Request failed with status ${response.status}.`;
     throw new Error(message);
   }
 
