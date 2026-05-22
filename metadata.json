@@ -1,0 +1,6 @@
+{
+  "name": "CJADE.studio Portfolio",
+  "description": "Ultra-minimalist stark black and white portfolio website for CRISTEVE JADE.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
